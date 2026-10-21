@@ -205,7 +205,7 @@ def prepare(args):
         cfg = learning_config(base, seed)
         config_file(str(child.relative_to(root) / "config.yaml"), cfg)
         small = dict(cfg, checkpoint_eval_interval_updates=1, checkpoint_eval_start_update=1,
-                     checkpoint_eval_episodes=8, checkpoint_eval_episode_seed_base=20420000,
+                     checkpoint_eval_episodes=8, checkpoint_eval_episode_seed_base=1910000,
                      checkpoint_eval_early_stop_enabled=False,
                      checkpoint_eval_reward_early_stop_enabled=False)
         scale = dict(cfg, checkpoint_eval_interval_updates=3, checkpoint_eval_start_update=3,
