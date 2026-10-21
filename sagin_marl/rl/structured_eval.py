@@ -394,6 +394,7 @@ def _new_episode_accumulator(cfg=None) -> Dict[str, float]:
         "uav_queue_sum_total": 0.0,
         "sat_queue_sum_total": 0.0,
         "queue_total_sum_total": 0.0,
+        "terminal_queue_sum": 0.0,
         "arrival_sum_total": 0.0,
         "outflow_sum_total": 0.0,
         "backhaul_sum_total": 0.0,
@@ -468,6 +469,7 @@ def _accumulate_step_metrics(
     acc["uav_queue_sum_total"] += uav_queue_sum
     acc["sat_queue_sum_total"] += sat_queue_sum
     acc["queue_total_sum_total"] += queue_total_sum
+    acc["terminal_queue_sum"] = queue_total_sum
     acc["arrival_sum_total"] += _metric_float(reward_parts, runtime_trace, "arrival_sum")
     acc["outflow_sum_total"] += _metric_float(reward_parts, runtime_trace, "outflow_sum")
     acc["backhaul_sum_total"] += _metric_float(reward_parts, runtime_trace, "backhaul_sum")
@@ -515,6 +517,7 @@ def _episode_row_from_accumulator(episode_index: int, acc: Dict[str, float]) -> 
         "uav_queue_mean": float(acc["uav_queue_sum_total"] / denom / max(acc.get("num_uav", 1.0), 1.0)),
         "sat_queue_mean": float(acc["sat_queue_sum_total"] / denom / max(acc.get("num_sat", 1.0), 1.0)),
         "queue_total_mean": float(acc["queue_total_sum_total"] / denom),
+        "terminal_queue_sum": float(acc["terminal_queue_sum"]),
         "arrival_sum": arrival_total,
         "arrival_step_mean": float(arrival_total / denom),
         "outflow_sum": float(acc["outflow_sum_total"]),
