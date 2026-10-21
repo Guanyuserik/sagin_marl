@@ -73,8 +73,12 @@ def conditions(base):
     return result
 
 
-def learning_config(base, seed):
-    result = dict(base, seed=seed, structured_actor_backbone="flat_mlp", critic_value_mode="flat_mlp")
+def learning_config(base, seed, model="flat_actor_critic"):
+    if model not in {"flat_actor_critic", "stars_replica"}:
+        raise ValueError(f"Unsupported learning model: {model}")
+    result = dict(base, seed=seed)
+    if model == "flat_actor_critic":
+        result.update(structured_actor_backbone="flat_mlp", critic_value_mode="flat_mlp")
     changed = {key for key in base if result.get(key) != base[key]}
     if changed - {"seed", "structured_actor_backbone", "critic_value_mode"}:
         raise ValueError(f"Unexpected learning-control changes: {changed}")
@@ -200,9 +204,14 @@ def prepare(args):
             evaluation_jobs.append(dict(point="nominal", config=nominal, model=model,
                 episode_seed_base=episode_base, episodes=64, horizon=250))
     training_jobs = []
-    for seed in SEEDS:
-        child = root / "training" / f"flat_actor_critic_seed{seed}"
-        cfg = learning_config(base, seed)
+    training_seeds = args.training_seeds
+    if len(set(training_seeds)) != len(training_seeds) or any(seed < 0 for seed in training_seeds):
+        raise ValueError("Training seeds must be distinct nonnegative integers")
+    if args.training_model == "stars_replica" and set(training_seeds) & set(SEEDS):
+        raise ValueError("STARS replications need new independent seeds")
+    for seed in training_seeds:
+        child = root / "training" / f"{args.training_model}_seed{seed}"
+        cfg = learning_config(base, seed, args.training_model)
         config_file(str(child.relative_to(root) / "config.yaml"), cfg)
         small = dict(cfg, checkpoint_eval_interval_updates=1, checkpoint_eval_start_update=1,
                      checkpoint_eval_episodes=8, checkpoint_eval_episode_seed_base=1910000,
@@ -214,7 +223,7 @@ def prepare(args):
                      checkpoint_eval_reward_early_stop_enabled=False)
         config_file(str(child.relative_to(root) / "small_config.yaml"), small)
         config_file(str(child.relative_to(root) / "scale_config.yaml"), scale)
-        training_jobs.append(dict(seed=seed, path=str(child), model="flat_actor_critic",
+        training_jobs.append(dict(seed=seed, path=str(child), model=args.training_model,
             differences={key: [base.get(key), cfg[key]] for key in cfg if base.get(key) != cfg[key]}))
     write_json(root / "manifest.json", dict(source_commit=commit,
         source_archive_sha256=sha(archive), reference_root=str(reference_root), provenance=provenance,
@@ -223,7 +232,7 @@ def prepare(args):
         training_jobs=training_jobs, evaluation_gpu=0, training_gpu=1,
         test_seed_bases=TEST_BASES, episodes_per_base=64, num_envs_eval=32,
         training_updates_cap=700, training_envs=64, training_rollout_slots=250,
-        learning_control_label=CONTROL_LABEL,
+        learning_control_label=CONTROL_LABEL if args.training_model == "flat_actor_critic" else "STARS independent training replications",
         checkpoint_selection="Unchanged reference validation and early stopping; selected and final both retained",
         evaluation_role="Held-out review evaluation; no model selection or tuning on these episodes",
         failure_policy="Keep all episodes; report collisions, observed horizon and fixed-horizon completion separately",
@@ -347,7 +356,7 @@ def run_training(root, manifest):
                     seed=episode_base, episodes=64, envs=32)
                 rows = read_csv(child / "evaluations" / label / f"{label}_episodes.csv")
                 for index, row in enumerate(rows):
-                    fresh_rows.append(dict(model="flat_actor_critic", training_seed=job["seed"],
+                    fresh_rows.append(dict(model=job["model"], training_seed=job["seed"],
                         checkpoint_kind=kind, episode_seed=episode_base + index,
                         **normalize_episode(row, 250)))
         write_csv(child / "review_heldout_episodes.csv", fresh_rows)
@@ -361,6 +370,8 @@ def main():
     parser.add_argument("--phase", choices=("prepare", "evaluation", "training"), required=True)
     parser.add_argument("--run_dir", required=True)
     parser.add_argument("--reference_root")
+    parser.add_argument("--training_model", choices=("flat_actor_critic", "stars_replica"), default="flat_actor_critic")
+    parser.add_argument("--training_seeds", type=int, nargs="+", default=list(SEEDS))
     args = parser.parse_args()
     root = Path(args.run_dir).resolve()
     if args.phase == "prepare":

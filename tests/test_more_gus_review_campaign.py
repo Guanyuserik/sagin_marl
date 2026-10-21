@@ -35,6 +35,13 @@ class ReviewCampaignTests(unittest.TestCase):
         self.assertEqual(changed, {"seed", "structured_actor_backbone", "critic_value_mode"})
         self.assertTrue(modified["safety_shield_enabled"])
 
+    def test_replication_changes_only_independent_training_seed(self):
+        modified = learning_config(self.base, 52931, "stars_replica")
+        changed = {key for key in self.base if modified[key] != self.base[key]}
+        self.assertEqual(changed, {"seed"})
+        with self.assertRaises(ValueError):
+            learning_config(self.base, 52931, "unverified_model")
+
     def episode(self):
         return dict(arrival_sum=1000, episode_length=250, sat_processed_sum=800,
             drop_sum=50, terminal_queue_sum=150, queue_total_mean=2e6,
