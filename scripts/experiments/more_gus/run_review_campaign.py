@@ -337,6 +337,20 @@ def run_training(root, manifest):
         write_json(root / "training/status.json", dict(status="running", phase="train", pid=os.getpid(),
             gpu=1, seed=job["seed"], completed_seeds=completed, time=time.time()))
         jobs.train(child, source, args)
+        write_json(root / "training/status.json", dict(status="running", phase="heldout_evaluation", pid=os.getpid(),
+            gpu=1, seed=job["seed"], completed_seeds=completed, time=time.time()))
+        fresh_rows = []
+        for kind, filename in (("selected", "best_checkpoint.pt"), ("final", "final.pt")):
+            for episode_base in manifest["test_seed_bases"]:
+                label = f"review_{kind}_seed{episode_base}"
+                jobs.evaluate(child, source, label, "config.yaml", child / "train" / filename,
+                    seed=episode_base, episodes=64, envs=32)
+                rows = read_csv(child / "evaluations" / label / f"{label}_episodes.csv")
+                for index, row in enumerate(rows):
+                    fresh_rows.append(dict(model="flat_actor_critic", training_seed=job["seed"],
+                        checkpoint_kind=kind, episode_seed=episode_base + index,
+                        **normalize_episode(row, 250)))
+        write_csv(child / "review_heldout_episodes.csv", fresh_rows)
         write_json(child / "status.json", dict(status="complete", seed=job["seed"], time=time.time()))
         completed.append(job["seed"])
     write_json(root / "training/status.json", dict(status="complete", completed_seeds=completed, time=time.time()))
