@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import torch
 
-from sagin_marl.rl.slot_mappo import agent_ppo_loss, hybrid_logprobs, slot_gae
+from sagin_marl.rl.slot_mappo import agent_ppo_loss, hybrid_logprobs, prepare_slot_batch, slot_gae
 
 
 class SlotMAPPOTests(unittest.TestCase):
@@ -62,6 +62,32 @@ class SlotMAPPOTests(unittest.TestCase):
     def test_nonfinite_likelihood_is_rejected(self):
         with self.assertRaisesRegex(RuntimeError, "non-finite"):
             agent_ppo_loss(torch.tensor([[float("nan")]]), torch.zeros(1, 1), torch.ones(1), .2)
+
+    def test_native_placeholder_values_are_recomputed_before_gae(self):
+        from dataclasses import make_dataclass
+        Local = make_dataclass("Local", [("x", torch.Tensor)])
+
+        class Policy:
+            def evaluate_actions(self, local, action, **kwargs):
+                n = action.shape[0]
+                return SimpleNamespace(logprob=torch.zeros(n), logprob_raw=torch.zeros(n),
+                    entropy=torch.zeros(n), entropy_raw=torch.zeros(n))
+
+        actor = SimpleNamespace(accel_policy=Policy(), sat_subset_policy=Policy(), bw_policy=Policy())
+        critic = SimpleNamespace(value_accel=lambda world: world.x[:, 0])
+        envs = __import__("numpy").array([0, 1, 0, 1])
+        stages = {s: SimpleNamespace(num_samples=4, num_agents=2, env_indices=envs,
+            transition_indices=__import__("numpy").arange(4) * 3 + s,
+            local_batch=Local(torch.zeros(8, 1)), world_batch=Local(torch.full((4, 1), 2.)),
+            actions=torch.zeros(4, 2, 2) if s != 1 else torch.zeros(4, 2, dtype=torch.long),
+            old_logprobs=torch.zeros(4), latent_actions=torch.zeros(4, 2, 2), values=torch.zeros(4),
+            rewards=torch.ones(4), terminated=torch.tensor([False, False, True, True]),
+            truncated=torch.zeros(4, dtype=torch.bool)) for s in range(3)}
+        views = SimpleNamespace(training_view=SimpleNamespace(stage_batches=stages),
+            return_view=SimpleNamespace(stage_batches={2: SimpleNamespace(next_world_batch=Local(torch.full((4, 1), 2.)))}))
+        batch = prepare_slot_batch(actor, critic, views, num_envs=2, gamma=1., gae_lambda=1., chunk_size=3)
+        torch.testing.assert_close(batch.old_values, torch.full((4,), 2.))
+        torch.testing.assert_close(batch.returns, torch.tensor([2., 2., 1., 1.]))
 
 
 if __name__ == "__main__":

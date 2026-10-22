@@ -119,7 +119,11 @@ def prepare_slot_batch(actor, critic, views, *, num_envs, gamma, gae_lambda, chu
             parity["bw_raw"] = max(parity["bw_raw"], float((parts[..., 2] - stored_raw.index_select(0, idx)).abs().max()))
     if any(not np.isfinite(v) or v > 1e-3 for v in parity.values()):
         raise RuntimeError(f"native/replayed old policy likelihood mismatch: {parity}")
-    old_values = motion.values.detach()
+    # The native ring leaves value fields as zero placeholders. Evaluate both
+    # sides of the Bellman residual with the same frozen pre-update critic.
+    old_values = torch.cat([critic.value_accel(_index_dataclass(motion.world_batch,
+        torch.arange(start, min(start + chunk_size, n), device=device)))
+        for start in range(0, n, chunk_size)]).detach()
     old_parts_t = torch.cat(old_parts)
     if not bool(torch.isfinite(old_parts_t).all()):
         raise RuntimeError("non-finite old hybrid log probability")

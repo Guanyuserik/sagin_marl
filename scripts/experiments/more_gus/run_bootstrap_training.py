@@ -185,8 +185,11 @@ def preflight(root, source, args):
         run_command(root, source, 'small_resume_u3', train_command(root, 'small_config.yaml', small, args,
                     envs=8, updates=3, save_every=1, resume=small / 'checkpoint_update0002.pt'))
     small_report = check_training(small, 3)
+    small_eval_seed = yaml.safe_load((root / 'small_config.yaml').read_text())['checkpoint_eval_episode_seed_base']
+    if small_eval_seed is None:
+        raise ValueError('Evaluation parity needs an explicit checkpoint evaluation seed.')
     external = evaluate(root, source, 'small_eval_parity', 'small_config.yaml', small / 'final.pt',
-                        seed=1910000, episodes=8, envs=8)
+                        seed=int(small_eval_seed), episodes=8, envs=8)
     internal = read_rows(small / 'checkpoint_eval.csv')[-1]
     parity = {}
     for key in ('reward_sum', 'processed_ratio_eval', 'drop_ratio_eval', 'pre_backlog_steps_eval', 'collision_episode_fraction'):
@@ -201,7 +204,7 @@ def preflight(root, source, args):
         if info['optimizer_steps'] <= 0:
             raise RuntimeError(f'{name} never updated in scale smoke; inspect critic gate.')
     write_json(root / 'preflight.json', dict(status='passed', small=small_report, scale=scale_report,
-                                            evaluation_abs_error=parity, evaluation_tolerance={'rtol':1e-5,'atol':1e-5,'collision_exact':True}, scale_wall_seconds=scale_seconds,
+                                            evaluation_seed=int(small_eval_seed), evaluation_abs_error=parity, evaluation_tolerance={'rtol':1e-5,'atol':1e-5,'collision_exact':True}, scale_wall_seconds=scale_seconds,
                                             finished_at=time.time()))
 
 
