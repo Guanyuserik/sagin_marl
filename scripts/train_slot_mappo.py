@@ -63,6 +63,8 @@ def main():
     parser.add_argument("--microbatch", type=int, default=256)
     parser.add_argument("--actor_lr", type=float, default=1e-4)
     parser.add_argument("--critic_lr", type=float, default=3e-4)
+    parser.add_argument("--entropy_coef", type=float, default=0.001)
+    parser.add_argument("--bw_entropy_coef", type=float, default=0.0)
     parser.add_argument("--hidden", type=int, default=512)
     parser.add_argument("--eval_interval", type=int, default=5)
     parser.add_argument("--eval_episodes", type=int, default=32)
@@ -91,6 +93,16 @@ def main():
     cfg.danger_imitation_enabled = False
     cfg.danger_imitation_coef = 0.0
     cfg.actor_lr, cfg.critic_lr = args.actor_lr, args.critic_lr
+    cfg.entropy_coef, cfg.entropy_coef_bw = args.entropy_coef, args.bw_entropy_coef
+    cfg.ppo_epochs, cfg.num_mini_batch = args.epochs, args.minibatches
+    cfg.checkpoint_eval_enabled = True
+    cfg.checkpoint_eval_interval_updates = cfg.checkpoint_eval_start_update = args.eval_interval
+    cfg.checkpoint_eval_episodes = args.eval_episodes
+    cfg.checkpoint_eval_episode_seed_base = args.eval_seed
+    cfg.checkpoint_eval_policy_mode = "deterministic"
+    cfg.checkpoint_eval_fixed_policy = ""
+    cfg.checkpoint_eval_early_stop_enabled = cfg.checkpoint_eval_reward_early_stop_enabled = False
+    cfg.checkpoint_eval_save_best_models = True
     cfg.stage_mcgae_critic_ev_gate_enabled = False
     for name in ("critic_compile_enabled", "stage_actor_compile_enabled", "accel_actor_compile_enabled", "sat_actor_compile_enabled", "bw_actor_compile_enabled"):
         setattr(cfg, name, False)
@@ -121,6 +133,8 @@ def main():
         actor_optimizer.load_state_dict(saved["actor_optimizer"])
         critic_optimizer.load_state_dict(saved["critic_optimizer"])
         start = saved["update"]
+        if args.updates < start:
+            raise ValueError("requested update limit precedes the resumed checkpoint")
         best_reward = saved["best_reward"]
         initial_digest = saved["initial_actor_sha256"]
         _restore_rng_state_payload(saved["rng_state"], device)
@@ -142,6 +156,8 @@ def main():
             "torch": torch.__version__, "cuda": torch.version.cuda, "device": torch.cuda.get_device_name(0),
             "ratio_unit": "per_UAV_joint_hybrid_action", "value_time": "pre_motion_once_per_slot",
             "bw_density": "raw_Dirichlet", "episode_horizon": "finite_terminal", "popart": True,
+            "entropy_coefs": [args.entropy_coef, args.entropy_coef, args.bw_entropy_coef],
+            "checkpoint_selection": "highest validation reward among zero-collision checkpoints",
             "critic_ev_gate": False, "danger_imitation": False, "created_at": time.time(),
         })
 
@@ -186,13 +202,15 @@ def main():
                 batch = prepare_slot_batch(actor, critic, views, num_envs=args.num_envs,
                     gamma=cfg.gamma, gae_lambda=cfg.gae_lambda, chunk_size=args.microbatch)
             write_json(output / "status.json", {"status": "running", "update": update, "phase": "PPO", "time": time.time()})
-            before = {name: next(module.parameters()).detach().clone() for name, module in
-                (("accel", actor.accel_policy), ("sat", actor.sat_subset_policy), ("bw", actor.bw_policy))}
+            before = {name: [p.detach().clone() for p in module.parameters() if p.requires_grad]
+                for name, module in (("accel", actor.accel_policy), ("sat", actor.sat_subset_policy), ("bw", actor.bw_policy))}
             info = update_slot_mappo(actor, critic, batch, actor_optimizer, critic_optimizer,
                 epochs=args.epochs, minibatches=args.minibatches, microbatch_size=args.microbatch,
-                clip_ratio=cfg.clip_ratio, value_coef=cfg.value_coef, max_grad_norm=cfg.max_grad_norm)
+                clip_ratio=cfg.clip_ratio, value_coef=cfg.value_coef, max_grad_norm=cfg.max_grad_norm,
+                entropy_coefs=(args.entropy_coef, args.entropy_coef, args.bw_entropy_coef))
             for name, module in (("accel", actor.accel_policy), ("sat", actor.sat_subset_policy), ("bw", actor.bw_policy)):
-                info[f"parameter_delta_{name}"] = float((next(module.parameters()).detach() - before[name]).abs().max())
+                current = [p for p in module.parameters() if p.requires_grad]
+                info[f"parameter_delta_{name}"] = max(float((p.detach() - old).abs().max()) for p, old in zip(current, before[name]))
             row = {"update": update, "iteration_sec": time.perf_counter() - begun,
                 "reward_step_mean": float(batch.stages[2].rewards.mean()), **info}
             append_csv(output / "metrics.csv", row)

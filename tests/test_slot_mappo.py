@@ -2,6 +2,7 @@ import math
 import unittest
 from types import SimpleNamespace
 
+import numpy as np
 import torch
 
 from sagin_marl.rl.slot_mappo import agent_ppo_loss, hybrid_logprobs, prepare_slot_batch, slot_gae
@@ -75,9 +76,9 @@ class SlotMAPPOTests(unittest.TestCase):
 
         actor = SimpleNamespace(accel_policy=Policy(), sat_subset_policy=Policy(), bw_policy=Policy())
         critic = SimpleNamespace(value_accel=lambda world: world.x[:, 0])
-        envs = __import__("numpy").array([0, 1, 0, 1])
+        envs = np.array([0, 1, 0, 1])
         stages = {s: SimpleNamespace(num_samples=4, num_agents=2, env_indices=envs,
-            transition_indices=__import__("numpy").arange(4) * 3 + s,
+            transition_indices=np.arange(4) * 3 + s,
             local_batch=Local(torch.zeros(8, 1)), world_batch=Local(torch.full((4, 1), 2.)),
             actions=torch.zeros(4, 2, 2) if s != 1 else torch.zeros(4, 2, dtype=torch.long),
             old_logprobs=torch.zeros(4), latent_actions=torch.zeros(4, 2, 2), values=torch.zeros(4),
