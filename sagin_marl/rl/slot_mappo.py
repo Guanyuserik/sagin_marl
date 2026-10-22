@@ -155,6 +155,7 @@ def update_slot_mappo(actor, critic, batch, actor_optimizer, critic_optimizer, *
     critic_params = [p for p in critic.parameters() if p.requires_grad]
     totals = {key: 0.0 for key in ("policy_loss", "value_loss", "approx_kl", "clip_frac", "ratio_mean")}
     updates = 0
+    grad_norms = {name: 0.0 for name in ("actor", "critic")}
     for _ in range(epochs):
         for outer in torch.randperm(n, device=device).tensor_split(min(minibatches, n)):
             actor_optimizer.zero_grad(set_to_none=True)
@@ -178,10 +179,20 @@ def update_slot_mappo(actor, critic, batch, actor_optimizer, critic_optimizer, *
                 (value_coef * value_loss * weight).backward()
                 for key, value_ in {"policy_loss": policy_loss, "value_loss": value_loss, **info}.items():
                     totals[key] += weight * float(value_.detach())
-            torch.nn.utils.clip_grad_norm_(actor_params, max_grad_norm, error_if_nonfinite=True)
-            torch.nn.utils.clip_grad_norm_(critic_params, max_grad_norm, error_if_nonfinite=True)
+            grad_norms["actor"] += float(torch.nn.utils.clip_grad_norm_(actor_params, max_grad_norm, error_if_nonfinite=True))
+            grad_norms["critic"] += float(torch.nn.utils.clip_grad_norm_(critic_params, max_grad_norm, error_if_nonfinite=True))
             actor_optimizer.step()
             critic_optimizer.step()
             updates += 1
+    with torch.no_grad():
+        fitted = torch.cat([critic.value_accel(_index_dataclass(batch.stages[0].world_batch,
+            torch.arange(start, min(start + microbatch_size, n), device=device)))
+            for start in range(0, n, microbatch_size)])
+        variance = batch.returns.var(unbiased=False).clamp_min(1e-8)
+        ev_before = 1 - (batch.returns - batch.old_values).var(unbiased=False) / variance
+        ev_after = 1 - (batch.returns - fitted).var(unbiased=False) / variance
     return {**{k: v / updates for k, v in totals.items()}, "optimizer_steps": updates,
+        **{f"grad_norm_{k}": v / updates for k, v in grad_norms.items()},
+        "value_ev_before": float(ev_before), "value_ev_after": float(ev_after),
+        "return_mean": float(batch.returns.mean()), "return_std": float(batch.returns.std(unbiased=False)),
         **{f"old_logprob_parity_{k}": v for k, v in batch.parity_errors.items()}}

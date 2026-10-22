@@ -87,6 +87,7 @@ def main():
     cfg.structured_actor_input_norm_enabled = True
     cfg.structured_critic_input_norm_enabled = True
     cfg.critic_popart_enabled = True
+    cfg.critic_popart_beta = 0.9
     cfg.danger_imitation_enabled = False
     cfg.danger_imitation_coef = 0.0
     cfg.actor_lr, cfg.critic_lr = args.actor_lr, args.critic_lr

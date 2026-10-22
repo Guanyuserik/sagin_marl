@@ -11,13 +11,13 @@ class SlotMAPPOTests(unittest.TestCase):
     def test_opposite_agent_changes_do_not_cancel_before_clipping(self):
         new = torch.tensor([[math.log(2), math.log(0.5)]], requires_grad=True)
         loss, info = agent_ppo_loss(new, torch.zeros_like(new), torch.ones(1), 0.2)
-        self.assertAlmostEqual(float(loss), -0.85, places=6)
+        self.assertAlmostEqual(float(loss.detach()), -0.85, places=6)
         self.assertEqual(float(info["clip_frac"]), 1.0)
         loss.backward()
         self.assertAlmostEqual(float(new.grad[0, 0]), 0.0)
         self.assertAlmostEqual(float(new.grad[0, 1]), -0.25)
         # A joint ratio over all UAVs would cancel 2 * .5 and produce loss -1.
-        self.assertNotAlmostEqual(float(loss), -1.0)
+        self.assertNotAlmostEqual(float(loss.detach()), -1.0)
 
     def test_slot_gae_terminal_and_env_separation(self):
         rewards = torch.tensor([[1., 10.], [2., 20.], [4., 40.]])
@@ -47,7 +47,6 @@ class SlotMAPPOTests(unittest.TestCase):
                 return SimpleNamespace(logprob=torch.full((n,), self.value),
                     logprob_raw=torch.full((n,), self.value * 7), entropy=torch.ones(n), entropy_raw=torch.full((n,), 7.))
 
-        local = SimpleNamespace()  # _index_dataclass requires a tensor dataclass.
         from dataclasses import make_dataclass
         Local = make_dataclass("Local", [("x", torch.Tensor)])
         local = Local(torch.zeros(4, 1))
